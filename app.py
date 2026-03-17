@@ -43,6 +43,7 @@ if 'reset_data' not in st.session_state:
 if 'ai_extracted' not in st.session_state:
     st.session_state['ai_extracted'] = False
 
+# 초기 업로드용 임시 컬럼 (세대수 통합)
 input_columns = ['구간', '세대수(세대)', '선정관경', '직관길이(m)', '볼밸브(개)', '90도엘보(개)', '45도엘보(개)', '동경티(개)', '1/4축소티(개)', '1/2레듀샤(개)']
 empty_df = pd.DataFrame(columns=input_columns)
 
@@ -104,11 +105,10 @@ elif menu == "🤖 2. 관경 산출 고도화 (도면 AI)":
         if st.button("🤖 AI 도면 분석 시작 (추출 시뮬레이션)"):
             st.session_state['ai_extracted'] = True
             with st.spinner("AI가 도면의 배관 경로, 관경 텍스트, 엘보/티 개수를 분석 중입니다..."):
-                time.sleep(2.5) # AI API 호출 대기시간 시뮬레이션
+                time.sleep(2.5) 
                 st.toast("✅ 도면 분석 완료! 아래 에디터에 물량이 자동 입력되었습니다.")
                 
     if st.session_state['ai_extracted'] and uploaded_pdf:
-        # 월성주공 도면을 AI가 분석했다고 가정하고 뽑아낸 모의(Mock) 데이터
         df = pd.DataFrame([
             ["A-B", 1740, "400P", 64.0, 1, 1, 0, 0, 0, 0],
             ["B-C", 1740, "280P", 17.0, 0, 2, 0, 1, 0, 0],
@@ -122,19 +122,50 @@ elif menu == "🤖 2. 관경 산출 고도화 (도면 AI)":
 st.markdown("---")
 
 # ==========================================
-# 공통 로직: 열량 변환, 에디터, 결과 계산
+# 공통 로직 1: 다중 타입(구역) 소비량 동적 설정
 # ==========================================
-st.markdown("### 1️⃣ 세대당 가스소비량 설정")
-col1, col2, col3 = st.columns(3)
-boiler_kcal = col1.number_input("보일러 발열량 (kcal/hr)", value=22100, step=100)
-range_kcal = col2.number_input("가스레인지 발열량 (kcal/hr)", value=7000, step=100)
-household_flow = (boiler_kcal + range_kcal) / STANDARD_CAL 
-col3.info(f"💡 산출된 세대당 유량: **{household_flow:.4f} ㎥/hr**")
+st.markdown("### 1️⃣ 구역/타입별 가스소비량 설정")
+st.caption("💡 표 맨 아래를 클릭하거나 하단의 `+` 모양을 눌러 **구역 및 세대 타입(A, B, C 등)**을 마음껏 추가해 보세요. 추가된 타입은 아래 표에 자동으로 반영됩니다.")
+
+if 'type_df' not in st.session_state:
+    st.session_state['type_df'] = pd.DataFrame([
+        {"구분(타입명)": "Type A", "보일러(kcal/hr)": 22100, "가스레인지(kcal/hr)": 7000}
+    ])
+
+edited_type_df = st.data_editor(
+    st.session_state['type_df'],
+    num_rows="dynamic",
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "구분(타입명)": st.column_config.TextColumn("구분(타입명)", required=True),
+        "보일러(kcal/hr)": st.column_config.NumberColumn("보일러 발열량", format="%d"),
+        "가스레인지(kcal/hr)": st.column_config.NumberColumn("가스레인지 발열량", format="%d"),
+    }
+)
+st.session_state['type_df'] = edited_type_df
+
+# 설정된 타입별 유량 계산 딕셔너리 생성
+flow_rates = {}
+for idx, row in edited_type_df.iterrows():
+    name = str(row["구분(타입명)"]).strip()
+    if name and name not in ['nan', 'None', '']:
+        flow = (row["보일러(kcal/hr)"] + row["가스레인지(kcal/hr)"]) / STANDARD_CAL
+        flow_rates[name] = flow
+
+if not flow_rates:
+    flow_rates["기본"] = (22100 + 7000) / STANDARD_CAL
+
+cols = st.columns(len(flow_rates) if len(flow_rates) > 0 else 1)
+for i, (name, flow) in enumerate(flow_rates.items()):
+    cols[i].info(f"💡 **{name}** 유량: **{flow:.4f} ㎥/hr**")
 
 st.markdown("---")
 
+# ==========================================
+# 공통 로직 2: 도면 물량 직접 입력 (동적 세대수 열 적용)
+# ==========================================
 st.markdown("### 2️⃣ 구간별 도면 물량 입력 (Data Entry)")
-st.caption("💡 글자 지우기(백스페이스)로 '구간' 칸을 비우면 해당 줄은 계산에서 완전히 제외됩니다.")
 
 col_btn, _ = st.columns([1, 4])
 with col_btn:
@@ -143,48 +174,72 @@ with col_btn:
         st.session_state['ai_extracted'] = False
         st.rerun()
 
-df = df.fillna(0) 
+# 1번에서 설정한 타입들을 세대수 컬럼으로 변환
+type_cols = [f"{name} 세대수" for name in flow_rates.keys()]
+
+# 기존 업로드된 데이터의 '세대수(세대)' 열을 첫 번째 타입 열로 이동 (호환성 유지)
+if '세대수(세대)' in df.columns:
+    if len(type_cols) > 0:
+        df[type_cols[0]] = df['세대수(세대)']
+    df = df.drop(columns=['세대수(세대)'])
+
+base_cols_front = ['구간']
+base_cols_back = ['선정관경', '직관길이(m)', '볼밸브(개)', '90도엘보(개)', '45도엘보(개)', '동경티(개)', '1/4축소티(개)', '1/2레듀샤(개)']
+final_input_cols = base_cols_front + type_cols + base_cols_back
+
+for c in final_input_cols:
+    if c not in df.columns:
+        df[c] = 0
+
+df = df[final_input_cols]
+df = df.fillna(0)
+
+# 에디터 UI 구성 (동적 타입 컬럼 포맷팅 포함)
+editor_col_config = {
+    "선정관경": st.column_config.SelectboxColumn("선정관경", options=list(pipe_data.keys())),
+    "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%.2f"),
+}
+for tc in type_cols:
+    editor_col_config[tc] = st.column_config.NumberColumn(tc, format="%d")
 
 edited_df = st.data_editor(
     df,
     num_rows="dynamic",
     use_container_width=True,
     hide_index=False,
-    column_config={
-        "선정관경": st.column_config.SelectboxColumn("선정관경", options=list(pipe_data.keys())),
-        "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%.2f"),
-    }
+    column_config=editor_col_config
 )
 
 edited_df['구간'] = edited_df['구간'].astype(str).str.strip() 
 edited_df = edited_df[~edited_df['구간'].isin(['', '0', 'nan', 'None'])] 
 edited_df = edited_df.fillna(0) 
 
-# 계산 로직
+# ==========================================
+# 백엔드 계산 (다중 타입 합산 로직)
+# ==========================================
+# 1차: 총길이 산출
 for idx, row in edited_df.iterrows():
     pipe_type = str(row['선정관경']).strip()
     if pipe_type not in pipe_data:
         pipe_type = '400P' 
         
     p_info = pipe_data.get(pipe_type)
-    
     eq_length = (float(row['볼밸브(개)']) * p_info['ball']) + \
                 (float(row['90도엘보(개)']) * p_info['el90']) + \
                 (float(row['45도엘보(개)']) * p_info['el45']) + \
                 (float(row['동경티(개)']) * p_info['tee']) + \
                 (float(row['1/4축소티(개)']) * p_info['tee14']) + \
                 (float(row['1/2레듀샤(개)']) * p_info['red12'])
-                
-    total_length = float(row['직관길이(m)']) + eq_length
     
     edited_df.at[idx, '관상당합계'] = eq_length
-    edited_df.at[idx, '관길이(m)'] = total_length
+    edited_df.at[idx, '관길이(m)'] = float(row['직관길이(m)']) + eq_length
 
 grand_total_length = edited_df['관길이(m)'].sum()
 
 result_data = []
 total_actual_drop = 0
 
+# 2차: 타입별 합산 유량 및 압력손실 계산
 for idx, row in edited_df.iterrows():
     pipe_type = str(row['선정관경']).strip()
     if pipe_type not in pipe_data:
@@ -193,10 +248,17 @@ for idx, row in edited_df.iterrows():
     p_info = pipe_data.get(pipe_type)
     inner_d = p_info['inner_d']
     
-    세대수 = int(row['세대수(세대)'])
-    sim_rate = get_sim_rate(세대수)
-    q_calc = 세대수 * sim_rate * household_flow
-    
+    # 설정된 모든 타입의 세대수와 유량을 합산
+    total_houses = 0
+    total_q = 0
+    for name, flow in flow_rates.items():
+        tc = f"{name} 세대수"
+        h = int(row[tc]) if pd.notnull(row[tc]) and row[tc] != '' else 0
+        total_houses += h
+        total_q += h * flow
+        
+    sim_rate = get_sim_rate(total_houses)
+    q_calc = total_q * sim_rate
     관길이 = row['관길이(m)']
     
     p_drop = 0.01222 * (관길이 * (q_calc ** 2)) / (inner_d ** 5) if inner_d > 0 else 0
@@ -204,10 +266,17 @@ for idx, row in edited_df.iterrows():
     
     allowable_drop = STANDARD_PRESSURE * (관길이 / grand_total_length) if grand_total_length > 0 else 0
     
-    result_data.append({
+    # 딕셔너리에 동적으로 병합
+    row_dict = {
         "구간": row['구간'],
         "선정관경": pipe_type,
-        "세대수(세대)": 세대수,
+    }
+    for name in flow_rates.keys():
+        tc = f"{name} 세대수"
+        row_dict[tc] = int(row[tc])
+        
+    row_dict.update({
+        "총 세대수": total_houses,
         "동시사용률": sim_rate,
         "직관길이(m)": round(row['직관길이(m)'], 2),
         "관상당합계": round(row['관상당합계'], 2),
@@ -216,11 +285,15 @@ for idx, row in edited_df.iterrows():
         "실_압력손실(kPa)": round(p_drop, 4),
         "구간_허용압력(kPa)": round(allowable_drop, 4)
     })
+    result_data.append(row_dict)
 
 result_df = pd.DataFrame(result_data)
 
 st.markdown("---")
 
+# ==========================================
+# 3. 최종 결과 표 (뷰어 및 다운로드)
+# ==========================================
 def convert_df_to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -241,20 +314,26 @@ with col_download:
             use_container_width=True
         )
 
+# 다중 타입 컬럼 포맷팅
+res_col_config = {
+    "총 세대수": st.column_config.NumberColumn("총 세대수", format="%,d"),
+    "유량(㎥/hr)": st.column_config.NumberColumn("유량(㎥/hr)", format="%,.2f"),
+    "동시사용률": st.column_config.NumberColumn("동시사용률", format="%.2f"),
+    "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%,.2f"),
+    "관상당합계": st.column_config.NumberColumn("관상당합계", format="%,.2f"),
+    "관길이(m)": st.column_config.NumberColumn("관길이(m)\n(직관+관상당)", format="%,.2f"),
+    "실_압력손실(kPa)": st.column_config.NumberColumn("실_압력손실(kPa)\n(실제 지출)", format="%.4f"),
+    "구간_허용압력(kPa)": st.column_config.NumberColumn("구간 허용압력(kPa)\n(쪼개진 예산)", format="%.4f"),
+}
+for name in flow_rates.keys():
+    tc = f"{name} 세대수"
+    res_col_config[tc] = st.column_config.NumberColumn(tc, format="%,d")
+
 st.dataframe(
     result_df,
     use_container_width=True,
     hide_index=True,
-    column_config={
-        "세대수(세대)": st.column_config.NumberColumn("세대수(세대)", format="%,d"),
-        "유량(㎥/hr)": st.column_config.NumberColumn("유량(㎥/hr)", format="%,.2f"),
-        "동시사용률": st.column_config.NumberColumn("동시사용률", format="%.2f"),
-        "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%,.2f"),
-        "관상당합계": st.column_config.NumberColumn("관상당합계", format="%,.2f"),
-        "관길이(m)": st.column_config.NumberColumn("관길이(m)\n(직관+관상당)", format="%,.2f"),
-        "실_압력손실(kPa)": st.column_config.NumberColumn("실_압력손실(kPa)\n(실제 지출)", format="%.4f"),
-        "구간_허용압력(kPa)": st.column_config.NumberColumn("구간 허용압력(kPa)\n(쪼개진 예산)", format="%.4f"),
-    }
+    column_config=res_col_config
 )
 
 st.markdown("#### 🎯 최종 판정 결과")
