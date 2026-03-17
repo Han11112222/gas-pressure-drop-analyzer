@@ -2,26 +2,23 @@ import streamlit as st
 import pandas as pd
 
 st.set_page_config(page_title="공동주택 관경 적합성 자동 검토기", layout="wide")
-
 st.title("🏢 공동주택 도시가스 관경 사전 검토기 (Auto-Calc)")
 
-# 도시가스 표준열량
 STANDARD_CAL = 10145 
 
-# 관경별 제원표
+# 엑셀 [표(관상당)] 시트 기준 6종 부속류 제원표 업데이트
 pipe_data = {
-    '400P': {'inner_d': 32.92, 'valve': 4.0, 'elbow90': 18.0, 'tee': 25.0},
-    '355P': {'inner_d': 29.04, 'valve': 3.5, 'elbow90': 16.0, 'tee': 22.0},
-    '280P': {'inner_d': 22.92, 'valve': 2.5, 'elbow90': 11.0, 'tee': 16.0},
-    '225P': {'inner_d': 18.50, 'valve': 2.0, 'elbow90': 9.0,  'tee': 13.0},
-    '160P': {'inner_d': 13.18, 'valve': 1.1, 'elbow90': 4.8,  'tee': 10.0},
-    '90P':  {'inner_d': 7.36,  'valve': 0.5, 'elbow90': 2.4,  'tee': 4.0},
-    '65S':  {'inner_d': 6.90,  'valve': 0.43,'elbow90': 2.0,  'tee': 3.2},
-    '50S':  {'inner_d': 5.32,  'valve': 0.35,'elbow90': 1.7,  'tee': 2.6},
-    '40S':  {'inner_d': 4.21,  'valve': 0.30,'elbow90': 1.4,  'tee': 2.1}
+    '400P': {'inner_d': 32.92, 'ball': 4.0, 'el90': 18.0, 'el45': 9.0, 'tee': 25.0, 'tee14': 12.0, 'red12': 9.0},
+    '355P': {'inner_d': 29.04, 'ball': 3.5, 'el90': 16.0, 'el45': 8.0, 'tee': 22.0, 'tee14': 10.0, 'red12': 8.0},
+    '280P': {'inner_d': 22.92, 'ball': 2.5, 'el90': 11.0, 'el45': 5.5, 'tee': 16.0, 'tee14': 7.0,  'red12': 5.0},
+    '225P': {'inner_d': 18.50, 'ball': 2.0, 'el90': 9.0,  'el45': 4.5, 'tee': 13.0, 'tee14': 6.0,  'red12': 4.0},
+    '160P': {'inner_d': 13.18, 'ball': 1.1, 'el90': 4.8,  'el45': 2.4, 'tee': 10.0, 'tee14': 4.3,  'red12': 1.8},
+    '90P':  {'inner_d': 7.36,  'ball': 0.5, 'el90': 2.4,  'el45': 1.2, 'tee': 4.0,  'tee14': 1.5,  'red12': 0.9},
+    '65S':  {'inner_d': 6.90,  'ball': 0.43,'el90': 2.0,  'el45': 1.0, 'tee': 3.2,  'tee14': 1.3,  'red12': 0.7},
+    '50S':  {'inner_d': 5.32,  'ball': 0.35,'el90': 1.7,  'el45': 0.85,'tee': 2.6,  'tee14': 1.0,  'red12': 0.6},
+    '40S':  {'inner_d': 4.21,  'ball': 0.30,'el90': 1.4,  'el45': 0.7, 'tee': 2.1,  'tee14': 0.7,  'red12': 0.45}
 }
 
-# 동시사용률 자동 산출 함수 (도시가스 공동주택 설계 기준)
 def get_sim_rate(n):
     if n <= 0: return 0.0
     elif n <= 2: return 1.0
@@ -40,73 +37,53 @@ def get_sim_rate(n):
     elif n <= 300: return 0.29
     else: return 0.28
 
-# ==========================================
-# 1. 좌측 사이드바: 엑셀 파일 업로드
-# ==========================================
+# 1. 파일 업로드
 with st.sidebar:
     st.header("⚙️ 엑셀 데이터 불러오기")
     uploaded_file = st.file_uploader("관경산출식 엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
-    st.info("파일을 업로드하면 기존 구간과 세대수 정보가 자동으로 입력됩니다.")
 
-# 데이터프레임 초기화
-input_columns = ['구간', '세대수', '직관길이(m)', '선정관경', '밸브(개)', '90도엘보(개)', '티(개)', '허용압력손실']
+# 부속류 6종이 모두 포함된 초기 컬럼 세팅
+input_columns = ['구간', '세대수', '직관길이(m)', '선정관경', '볼밸브', '90도엘보', '45도엘보', '동경티', '1/4축소티', '1/2레듀샤', '허용압력(예산)']
 
 if uploaded_file:
     try:
-        # 엑셀 파일 읽기 및 시트 선택
         xls = pd.ExcelFile(uploaded_file)
         sheet_names = [s for s in xls.sheet_names if '관경산출식' in s]
-        sheet_names = sheet_names if sheet_names else xls.sheet_names
-        selected_sheet = st.sidebar.selectbox("불러올 시트 선택", sheet_names)
+        selected_sheet = st.sidebar.selectbox("불러올 시트 선택", sheet_names if sheet_names else xls.sheet_names)
         df_excel = pd.read_excel(uploaded_file, sheet_name=selected_sheet, skiprows=7)
 
-        # 엑셀 데이터 매핑 (1:구간, 9:세대수, 11:관길이, 16:선정관경, 18:허용압력)
         df = df_excel.iloc[:, [1, 9, 11, 16, 18]].copy()
-        df.columns = ['구간', '세대수', '직관길이(m)', '선정관경', '허용압력손실']
-        
-        # 필터링
+        df.columns = ['구간', '세대수', '직관길이(m)', '선정관경', '허용압력(예산)']
         df = df.dropna(subset=['구간'])
         df = df[~df['구간'].astype(str).str.contains('계|합')]
         
-        # 부속류 기본값 0 추가
-        df['밸브(개)'] = 0
-        df['90도엘보(개)'] = 0
-        df['티(개)'] = 0
-        
-        # 컬럼 순서 정렬
+        # 부속류 기본값 0으로 세팅
+        for fitting in ['볼밸브', '90도엘보', '45도엘보', '동경티', '1/4축소티', '1/2레듀샤']:
+            df[fitting] = 0
+            
         df = df[input_columns]
-        
-        # 숫자형 변환
-        for col in ['세대수', '직관길이(m)', '허용압력손실']:
+        for col in ['세대수', '직관길이(m)', '허용압력(예산)']:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
-    except Exception as e:
-        st.sidebar.error(f"엑셀을 읽는 중 오류가 발생했습니다. 직접 입력 모드로 진행합니다. ({e})")
-        df = pd.DataFrame([["A-B", 1740, 64.0, "400P", 1, 0, 0, 0.0455]], columns=input_columns)
+    except Exception:
+        df = pd.DataFrame([["A-B", 1740, 64.0, "400P", 1, 0, 0, 0, 0, 0, 0.0455]], columns=input_columns)
 else:
-    df = pd.DataFrame([["A-B", 1740, 64.0, "400P", 1, 0, 0, 0.0455]], columns=input_columns)
+    df = pd.DataFrame([["A-B", 1740, 64.0, "400P", 1, 0, 0, 0, 0, 0, 0.0455]], columns=input_columns)
 
 st.markdown("---")
 
-# ==========================================
-# 2. 상단: 글로벌 변수 입력 (연소기 열량 -> 유량 변환)
-# ==========================================
+# 2. 열량 변환
 st.markdown("### 1️⃣ 세대당 가스소비량 설정")
 col1, col2, col3 = st.columns(3)
 boiler_kcal = col1.number_input("보일러 발열량 (kcal/hr)", value=22100, step=100)
 range_kcal = col2.number_input("가스레인지 발열량 (kcal/hr)", value=7000, step=100)
-
-total_kcal = boiler_kcal + range_kcal
-household_flow = total_kcal / STANDARD_CAL 
-col3.info(f"💡 **계산된 세대당 유량:**\n\n(총 {total_kcal:,} kcal/hr) ÷ 10,145 = **{household_flow:.4f} ㎥/hr**")
+household_flow = (boiler_kcal + range_kcal) / STANDARD_CAL 
+col3.info(f"💡 계산된 세대당 유량: **{household_flow:.4f} ㎥/hr**")
 
 st.markdown("---")
 
-# ==========================================
-# 3. 중단: 담당자 물량 직접 입력창 (동시사용률 제외됨)
-# ==========================================
-st.markdown("### 2️⃣ 구간별 데이터 입력 (Data Entry)")
-st.caption("엑셀에서 불러온 데이터를 확인하거나, 직접 **세대수**, **직관길이**, **부속류**를 수정하세요. 동시사용률은 자동 계산됩니다.")
+# 3. 도면 물량 입력 (에디터)
+st.markdown("### 2️⃣ 구간별 도면 물량 입력")
+st.caption("💡 도면을 보고 부속류 개수를 입력하고 Enter를 누르시면, **맨 아래 3번 표**에서 동시사용률과 결과가 즉시 재계산됩니다.")
 
 edited_df = st.data_editor(
     df,
@@ -114,15 +91,12 @@ edited_df = st.data_editor(
     use_container_width=True,
     hide_index=True,
     column_config={
-        "세대수": st.column_config.NumberColumn("세대수 (입력)", format="%d"),
         "선정관경": st.column_config.SelectboxColumn("선정관경", options=list(pipe_data.keys()), required=True),
-        "허용압력손실": st.column_config.NumberColumn("허용압력(예산)", format="%.4f"),
+        "허용압력(예산)": st.column_config.NumberColumn("허용압력(예산)", format="%.4f"),
     }
 )
 
-# ==========================================
-# 4. 백엔드: 자동 계산 로직
-# ==========================================
+# 4. 백엔드 계산
 result_data = []
 total_actual_drop = 0
 total_allowable_drop = 0
@@ -131,47 +105,43 @@ for idx, row in edited_df.iterrows():
     pipe_type = str(row['선정관경']).strip()
     p_info = pipe_data.get(pipe_type, pipe_data['400P']) 
     
-    # 1) 세대수 기반 동시사용률 자동 산출
     sim_rate = get_sim_rate(int(row['세대수']))
     
-    # 2) 부속류 수량을 관상당환산길이(m)로 변환
-    eq_length = (row['밸브(개)'] * p_info['valve']) + \
-                (row['90도엘보(개)'] * p_info['elbow90']) + \
-                (row['티(개)'] * p_info['tee'])
-    
-    # 3) 총 관길이
+    # 6종 부속류에 대한 환산길이 정밀 계산
+    eq_length = (row['볼밸브'] * p_info['ball']) + \
+                (row['90도엘보'] * p_info['el90']) + \
+                (row['45도엘보'] * p_info['el45']) + \
+                (row['동경티'] * p_info['tee']) + \
+                (row['1/4축소티'] * p_info['tee14']) + \
+                (row['1/2레듀샤'] * p_info['red12'])
+                
     total_length = row['직관길이(m)'] + eq_length
-    
-    # 4) 유량 계산 (세대수 * 동시사용률 * 세대당유량)
     q_calc = row['세대수'] * sim_rate * household_flow
     
-    # 5) 실 압력손실 계산
     inner_d = p_info['inner_d']
     p_drop = 0.01222 * (total_length * (q_calc ** 2)) / (inner_d ** 5) if inner_d > 0 else 0
     
     total_actual_drop += p_drop
-    total_allowable_drop += row['허용압력손실']
+    total_allowable_drop += row['허용압력(예산)']
     
     result_data.append({
         "구간": row['구간'],
         "세대수": int(row['세대수']),
-        "동시사용률": sim_rate,  # 자동 산출된 값 표시
-        "관길이(m)": round(total_length, 2),
-        "유량합계(㎥/hr)": round(q_calc, 2),
+        "동시사용률": sim_rate,
+        "총관길이(m)": round(total_length, 2),
+        "유량(㎥/hr)": round(q_calc, 2),
         "선정관경": pipe_type,
-        "실_압력손실(kPa)": round(p_drop, 4),
-        "허용압력손실(kPa)": row['허용압력손실']
+        "실_압력손실": round(p_drop, 4),
+        "허용압력(예산)": row['허용압력(예산)']
     })
 
 result_df = pd.DataFrame(result_data)
 
 st.markdown("---")
 
-# ==========================================
-# 5. 하단: 최종 산출 결과표
-# ==========================================
-st.markdown("### 3️⃣ 최종 관경산출표 (Auto-Generated)")
-st.caption("담당자가 입력한 세대수와 물량을 바탕으로 **동시사용률, 환산길이, 압력손실**이 자동 적용된 결과입니다.")
+# 5. 최종 결과 표 (뷰어)
+st.markdown("### 3️⃣ 최종 관경산출표 (자동 계산 결과)")
+st.caption("위에서 입력한 값에 따라 **동시사용률, 부속류 환산길이, 실 압력손실**이 완벽하게 적용된 최종 결과입니다.")
 
 st.dataframe(
     result_df,
@@ -179,18 +149,18 @@ st.dataframe(
     hide_index=True,
     column_config={
         "동시사용률": st.column_config.NumberColumn("동시사용률 (자동)", format="%.2f"),
-        "관길이(m)": st.column_config.NumberColumn("총 관길이(m)", format="%.2f"),
-        "실_압력손실(kPa)": st.column_config.NumberColumn("실_압력손실(kPa)", format="%.4f"),
-        "허용압력손실(kPa)": st.column_config.NumberColumn("허용압력손실(kPa)", format="%.4f"),
+        "총관길이(m)": st.column_config.NumberColumn("총관길이(직관+부속)", format="%.2f m"),
+        "실_압력손실": st.column_config.NumberColumn("실_압력손실(지출)", format="%.4f kPa"),
+        "허용압력(예산)": st.column_config.NumberColumn("허용압력(예산)", format="%.4f kPa"),
     }
 )
 
 col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
-    st.metric(label="총 실 압력손실", value=f"{total_actual_drop:.4f} kPa")
+    st.metric(label="총 실 압력손실 (지출)", value=f"{total_actual_drop:.4f} kPa")
 with col2:
     budget = total_allowable_drop if total_allowable_drop > 0 else 0.3000
-    st.metric(label="총 허용 압력손실", value=f"{budget:.4f} kPa")
+    st.metric(label="총 허용 압력손실 (예산)", value=f"{budget:.4f} kPa")
 with col3:
     if total_actual_drop <= budget and total_actual_drop > 0:
         st.success("✅ **[공사 불필요] 사용 가능** (압력손실 기준치 이내)")
