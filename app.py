@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
-import io  # 엑셀 파일 변환을 위한 라이브러리 추가
+import io
+import time
 
 st.set_page_config(page_title="공동주택 관경 적합성 검토기", layout="wide")
-st.title("🏢 공동주택 도시가스 관경 사전 검토기")
 
 STANDARD_CAL = 10145 
 STANDARD_PRESSURE = 0.3000 
@@ -40,44 +40,90 @@ def get_sim_rate(n):
 
 if 'reset_data' not in st.session_state:
     st.session_state['reset_data'] = False
-
-with st.sidebar:
-    st.header("⚙️ 엑셀 데이터 불러오기")
-    uploaded_file = st.file_uploader("관경산출식 엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
+if 'ai_extracted' not in st.session_state:
+    st.session_state['ai_extracted'] = False
 
 input_columns = ['구간', '세대수(세대)', '선정관경', '직관길이(m)', '볼밸브(개)', '90도엘보(개)', '45도엘보(개)', '동경티(개)', '1/4축소티(개)', '1/2레듀샤(개)']
+empty_df = pd.DataFrame(columns=input_columns)
 
-if st.session_state['reset_data']:
-    df = pd.DataFrame(columns=input_columns) 
-else:
-    if uploaded_file:
-        try:
-            xls = pd.ExcelFile(uploaded_file)
-            sheet_names = [s for s in xls.sheet_names if '관경산출식' in s]
-            selected_sheet = st.sidebar.selectbox("불러올 시트 선택", sheet_names if sheet_names else xls.sheet_names)
-            df_excel = pd.read_excel(uploaded_file, sheet_name=selected_sheet, skiprows=7)
+# ==========================================
+# 좌측 사이드바 메뉴 구성
+# ==========================================
+with st.sidebar:
+    st.title("메뉴 이동")
+    menu = st.radio("작업 모드를 선택하세요:", ["📊 1. 관경 산출 (엑셀/수기)", "🤖 2. 관경 산출 고도화 (도면 AI)"])
+    st.markdown("---")
 
-            df = df_excel.iloc[:, [1, 9, 16, 11]].copy()
-            df.columns = ['구간', '세대수(세대)', '선정관경', '직관길이(m)']
-            df = df.dropna(subset=['구간'])
-            df = df[~df['구간'].astype(str).str.contains('계|합')]
-            
-            for fitting in ['볼밸브(개)', '90도엘보(개)', '45도엘보(개)', '동경티(개)', '1/4축소티(개)', '1/2레듀샤(개)']:
-                df[fitting] = 0
-                
-            df = df[input_columns]
-            for col in ['세대수(세대)', '직관길이(m)']:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        except Exception:
-            df = pd.DataFrame([["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0]], columns=input_columns)
+df = empty_df.copy()
+
+if menu == "📊 1. 관경 산출 (엑셀/수기)":
+    st.title("🏢 공동주택 도시가스 관경 사전 검토기")
+    with st.sidebar:
+        st.header("⚙️ 엑셀 데이터 불러오기")
+        uploaded_file = st.file_uploader("관경산출식 엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
+
+    if st.session_state['reset_data']:
+        df = empty_df.copy()
     else:
+        if uploaded_file:
+            try:
+                xls = pd.ExcelFile(uploaded_file)
+                sheet_names = [s for s in xls.sheet_names if '관경산출식' in s]
+                selected_sheet = st.sidebar.selectbox("불러올 시트 선택", sheet_names if sheet_names else xls.sheet_names)
+                df_excel = pd.read_excel(uploaded_file, sheet_name=selected_sheet, skiprows=7)
+
+                df = df_excel.iloc[:, [1, 9, 16, 11]].copy()
+                df.columns = ['구간', '세대수(세대)', '선정관경', '직관길이(m)']
+                df = df.dropna(subset=['구간'])
+                df = df[~df['구간'].astype(str).str.contains('계|합')]
+                
+                for fitting in ['볼밸브(개)', '90도엘보(개)', '45도엘보(개)', '동경티(개)', '1/4축소티(개)', '1/2레듀샤(개)']:
+                    df[fitting] = 0
+                    
+                df = df[input_columns]
+                for col in ['세대수(세대)', '직관길이(m)']:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            except Exception:
+                df = pd.DataFrame([["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0]], columns=input_columns)
+        else:
+            df = pd.DataFrame([
+                ["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0],
+                ["B-C", 1740, "400P", 94.0, 0, 2, 0, 0, 0, 0]
+            ], columns=input_columns)
+
+elif menu == "🤖 2. 관경 산출 고도화 (도면 AI)":
+    st.title("🚀 AI 도면 자동 인식 및 관경 산출")
+    st.markdown("도면(PDF, 이미지)을 업로드하면 Vision AI가 배관 라인, 텍스트, 부속류를 분석하여 물량표를 자동 생성합니다.")
+    
+    with st.sidebar:
+        st.header("⚙️ 도면 파일 불러오기")
+        uploaded_pdf = st.file_uploader("도면 업로드 (PDF, PNG, JPG)", type=['pdf', 'png', 'jpg', 'jpeg'])
+
+    if uploaded_pdf:
+        st.info(f"📄 업로드된 파일: **{uploaded_pdf.name}**")
+        if st.button("🤖 AI 도면 분석 시작 (추출 시뮬레이션)"):
+            st.session_state['ai_extracted'] = True
+            with st.spinner("AI가 도면의 배관 경로, 관경 텍스트, 엘보/티 개수를 분석 중입니다..."):
+                time.sleep(2.5) # AI API 호출 대기시간 시뮬레이션
+                st.toast("✅ 도면 분석 완료! 아래 에디터에 물량이 자동 입력되었습니다.")
+                
+    if st.session_state['ai_extracted'] and uploaded_pdf:
+        # 월성주공 도면을 AI가 분석했다고 가정하고 뽑아낸 모의(Mock) 데이터
         df = pd.DataFrame([
-            ["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0],
-            ["B-C", 1740, "400P", 94.0, 0, 2, 0, 0, 0, 0]
+            ["A-B", 1740, "400P", 64.0, 1, 1, 0, 0, 0, 0],
+            ["B-C", 1740, "280P", 17.0, 0, 2, 0, 1, 0, 0],
+            ["C-D", 1740, "225P", 132.0, 0, 3, 0, 0, 0, 1]
         ], columns=input_columns)
+    else:
+        df = empty_df.copy()
+        if not uploaded_pdf:
+            st.warning("좌측 사이드바에서 도면 파일을 업로드해 주세요.")
 
 st.markdown("---")
 
+# ==========================================
+# 공통 로직: 열량 변환, 에디터, 결과 계산
+# ==========================================
 st.markdown("### 1️⃣ 세대당 가스소비량 설정")
 col1, col2, col3 = st.columns(3)
 boiler_kcal = col1.number_input("보일러 발열량 (kcal/hr)", value=22100, step=100)
@@ -94,6 +140,7 @@ col_btn, _ = st.columns([1, 4])
 with col_btn:
     if st.button("🗑️ 표 전체 지우기 (새로 작성)"):
         st.session_state['reset_data'] = True
+        st.session_state['ai_extracted'] = False
         st.rerun()
 
 df = df.fillna(0) 
@@ -174,7 +221,6 @@ result_df = pd.DataFrame(result_data)
 
 st.markdown("---")
 
-# 엑셀 다운로드를 위한 함수
 def convert_df_to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -195,7 +241,6 @@ with col_download:
             use_container_width=True
         )
 
-# 포맷팅 적용 (천 단위 콤마 추가 등)
 st.dataframe(
     result_df,
     use_container_width=True,
@@ -222,21 +267,18 @@ with col3:
     if total_actual_drop == 0:
         st.info("데이터를 입력해 주세요.")
     elif total_actual_drop <= STANDARD_PRESSURE:
-        # 적합할 경우 - 녹색 배경에 큰 글씨
         st.markdown("""
         <div style="background-color: #d4edda; padding: 20px; border-radius: 10px; text-align: center; border: 2px solid #c3e6cb;">
             <h2 style="color: #155724; margin: 0; font-size: 2.2rem;">✅ 적 합 (공사 불필요)</h2>
         </div>
         """, unsafe_allow_html=True)
     else:
-        # 부적합할 경우 - 빨간색 배경에 큰 글씨
         st.markdown("""
         <div style="background-color: #f8d7da; padding: 20px; border-radius: 10px; text-align: center; border: 2px solid #f5c6cb;">
             <h2 style="color: #721c24; margin: 0; font-size: 2.2rem;">🚨 부 적 합 (관경 확대 요망)</h2>
         </div>
         """, unsafe_allow_html=True)
         
-        # 부적합 시 가장 압력손실이 큰 원인 구간 찾아주기
         if not result_df.empty:
             worst_idx = result_df['실_압력손실(kPa)'].idxmax()
             worst_section = result_df.loc[worst_idx, '구간']
