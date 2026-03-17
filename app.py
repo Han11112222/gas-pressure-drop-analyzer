@@ -19,7 +19,6 @@ pipe_data = {
     '40S':  {'inner_d': 4.21,  'ball': 0.30,'el90': 1.4,  'el45': 0.7, 'tee': 2.1,  'tee14': 0.7,  'red12': 0.45}
 }
 
-# 동시사용률 기준
 def get_sim_rate(n):
     if n <= 0: return 0.0
     elif n <= 2: return 1.0
@@ -45,7 +44,6 @@ with st.sidebar:
     st.header("⚙️ 엑셀 데이터 불러오기")
     uploaded_file = st.file_uploader("관경산출식 엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
 
-# 담당자가 입력할 물량 열 (허용압력손실 제거, 단위 명확화)
 input_columns = ['구간', '세대수(세대)', '선정관경', '직관길이(m)', '볼밸브(개)', '90도엘보(개)', '45도엘보(개)', '동경티(개)', '1/4축소티(개)', '1/2레듀샤(개)']
 
 if uploaded_file:
@@ -60,7 +58,6 @@ if uploaded_file:
         df = df.dropna(subset=['구간'])
         df = df[~df['구간'].astype(str).str.contains('계|합')]
         
-        # 부속류 열 0으로 초기화
         for fitting in ['볼밸브(개)', '90도엘보(개)', '45도엘보(개)', '동경티(개)', '1/4축소티(개)', '1/2레듀샤(개)']:
             df[fitting] = 0
             
@@ -90,10 +87,9 @@ st.markdown("---")
 # 3. 도면 물량 직접 입력 (에디터)
 # ==========================================
 st.markdown("### 2️⃣ 구간별 도면 물량 입력 (Data Entry)")
-st.caption("💡 '세대수', '직관길이', '부속류 수량'을 입력 후 **Enter**를 누르시면, 하단 표에서 환산길이와 압력손실이 즉시 자동 계산됩니다.")
+st.caption("💡 '직관길이'와 '부속류 수량'을 입력 후 **Enter**를 누르시면, 하단 표에서 **관상당합계**와 **관길이(m)**가 즉시 자동 산출됩니다.")
 
-# 빈칸(결측치)을 원천적으로 막기 위해 에디터 표시 전 0으로 채움
-df = df.fillna(0)
+df = df.fillna(0) # 에디터 초기화 시 결측치 0으로 강제 변환
 
 edited_df = st.data_editor(
     df,
@@ -106,18 +102,16 @@ edited_df = st.data_editor(
     }
 )
 
-# 에디터에서 발생할 수 있는 빈칸(None)을 다시 한번 0으로 강제 변환
-edited_df = edited_df.fillna(0)
+edited_df = edited_df.fillna(0) # 에디터 수정 후 결측치 발생 시 0으로 변환 (에러 원천 차단)
 
 # ==========================================
-# 4. 백엔드 계산 (2단계 로직 적용)
+# 4. 백엔드 계산 (관상당합계 & 관길이 산출)
 # ==========================================
-# [1단계]: 각 구간의 '환산길이'와 '총관길이'를 먼저 모두 구합니다.
 for idx, row in edited_df.iterrows():
     pipe_type = str(row['선정관경']).strip()
     p_info = pipe_data.get(pipe_type, pipe_data['400P']) 
     
-    # 환산길이 산출 (수량 * 관경별 제원)
+    # 엑셀의 '관상당합계' 수식 구현
     eq_length = (float(row['볼밸브(개)']) * p_info['ball']) + \
                 (float(row['90도엘보(개)']) * p_info['el90']) + \
                 (float(row['45도엘보(개)']) * p_info['el45']) + \
@@ -127,13 +121,12 @@ for idx, row in edited_df.iterrows():
                 
     total_length = float(row['직관길이(m)']) + eq_length
     
-    edited_df.at[idx, '환산길이(m)'] = eq_length
-    edited_df.at[idx, '총관길이(m)'] = total_length
+    edited_df.at[idx, '관상당합계'] = eq_length
+    edited_df.at[idx, '관길이(m)'] = total_length
 
-# 전체 배관 길이의 합계를 구합니다 (허용압력손실 분배용)
-grand_total_length = edited_df['총관길이(m)'].sum()
+# 허용압력손실 분배를 위한 전체 관길이 합산
+grand_total_length = edited_df['관길이(m)'].sum()
 
-# [2단계]: '총관길이' 비례에 따라 '허용압력손실'을 자동 분배하고 '실_압력손실'을 계산합니다.
 result_data = []
 total_actual_drop = 0
 total_allowable_drop = 0
@@ -147,26 +140,25 @@ for idx, row in edited_df.iterrows():
     sim_rate = get_sim_rate(세대수)
     q_calc = 세대수 * sim_rate * household_flow
     
-    총관길이 = row['총관길이(m)']
+    관길이 = row['관길이(m)']
     
     # 실 압력손실 (Pole 공식)
-    p_drop = 0.01222 * (총관길이 * (q_calc ** 2)) / (inner_d ** 5) if inner_d > 0 else 0
+    p_drop = 0.01222 * (관길이 * (q_calc ** 2)) / (inner_d ** 5) if inner_d > 0 else 0
     
-    # 허용압력손실 자동 분배: 전체 예산(0.3) * (현재구간 총길이 / 전체구간 총길이)
-    allowable_drop = 0.3 * (총관길이 / grand_total_length) if grand_total_length > 0 else 0
+    # 허용압력손실 자동 분배
+    allowable_drop = 0.3 * (관길이 / grand_total_length) if grand_total_length > 0 else 0
     
     total_actual_drop += p_drop
     total_allowable_drop += allowable_drop
     
-    # 3번 표에 들어갈 데이터 조립
     result_data.append({
         "구간": row['구간'],
         "선정관경": pipe_type,
         "세대수(세대)": 세대수,
         "동시사용률": sim_rate,
         "직관길이(m)": round(row['직관길이(m)'], 2),
-        "환산길이(m)": round(row['환산길이(m)'], 2),
-        "총관길이(m)": round(총관길이, 2),
+        "관상당합계": round(row['관상당합계'], 2),
+        "관길이(m)": round(관길이, 2),
         "유량(㎥/hr)": round(q_calc, 2),
         "실_압력손실(kPa)": round(p_drop, 4),
         "허용압력손실(kPa)": round(allowable_drop, 4)
@@ -179,8 +171,8 @@ st.markdown("---")
 # ==========================================
 # 5. 최종 결과 표 (뷰어)
 # ==========================================
-st.markdown("### 3️⃣ 최종 관경산출표 (자동 산출 결과)")
-st.caption("직관길이와 환산길이가 합산된 **총관길이**, 그리고 전체 0.3kPa 기준에서 길이 비례로 자동 분배된 **허용압력손실** 결과입니다.")
+st.markdown("### 3️⃣ 최종 관경산출표")
+st.caption("**직관길이 + 관상당합계 = 관길이(m)** 로직이 적용되어 엑셀과 동일한 명칭과 계산값으로 도출됩니다.")
 
 st.dataframe(
     result_df,
@@ -189,19 +181,18 @@ st.dataframe(
     column_config={
         "동시사용률": st.column_config.NumberColumn("동시사용률", format="%.2f"),
         "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%.2f"),
-        "환산길이(m)": st.column_config.NumberColumn("환산길이(m) (자동)", format="%.2f"),
-        "총관길이(m)": st.column_config.NumberColumn("총관길이(m) (직관+환산)", format="%.2f"),
-        "실_압력손실(kPa)": st.column_config.NumberColumn("실_압력손실(kPa) (계산)", format="%.4f"),
-        "허용압력손실(kPa)": st.column_config.NumberColumn("허용압력손실(kPa) (자동분배)", format="%.4f"),
+        "관상당합계": st.column_config.NumberColumn("관상당합계\n(환산수치)", format="%.2f"),
+        "관길이(m)": st.column_config.NumberColumn("관길이(m)\n(직관+관상당)", format="%.2f"),
+        "실_압력손실(kPa)": st.column_config.NumberColumn("실_압력손실(kPa)", format="%.4f"),
+        "허용압력손실(kPa)": st.column_config.NumberColumn("허용압력손실(kPa)", format="%.4f"),
     }
 )
 
-# 판정 결과 대시보드
 col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
-    st.metric(label="총 실 압력손실 (계산합계)", value=f"{total_actual_drop:.4f} kPa")
+    st.metric(label="총 실 압력손실 합계", value=f"{total_actual_drop:.4f} kPa")
 with col2:
-    st.metric(label="총 허용 압력손실 (기준합계)", value=f"{total_allowable_drop:.4f} kPa")
+    st.metric(label="총 허용 압력손실 합계", value=f"{total_allowable_drop:.4f} kPa")
 with col3:
     if total_actual_drop <= 0.3 and total_actual_drop > 0:
         st.success("✅ **[공사 불필요] 적합 판정** (총 압력손실 0.3kPa 이내 만족)")
