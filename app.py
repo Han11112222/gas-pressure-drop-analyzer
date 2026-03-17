@@ -127,7 +127,7 @@ else:
 
 st.markdown("---")
 
-# 1. 세대당 가스소비량 설정 (단일 라인 원복)
+# 1. 세대당 가스소비량 설정
 st.markdown("### 1️⃣ 세대당 가스소비량 설정")
 col1, col2, col3 = st.columns(3)
 boiler_kcal = col1.number_input("보일러 발열량 (kcal/hr)", value=22100, step=100)
@@ -165,7 +165,7 @@ edited_df['구간'] = edited_df['구간'].astype(str).str.strip()
 edited_df = edited_df[~edited_df['구간'].isin(['', '0', 'nan', 'None'])] 
 edited_df = edited_df.fillna(0) 
 
-# 변수 초기화 (에러 방지)
+# 변수 초기화
 total_actual_drop = 0
 result_data = []
 
@@ -297,15 +297,14 @@ with col3:
         if diagnosis_msg:
             st.markdown(f"""<div style="margin-top:15px; padding:15px; background-color:#fff3cd; border-left:5px solid #ffc107; color:#856404;"><strong>{diagnosis_msg}</strong></div>""", unsafe_allow_html=True)
 
-st.markdown("---")
-
 # ==========================================
-# 부록: 공사 예상 비용 추산기 (마케팅용 무기)
+# 부록: 공사 예상 비용 추산기 (부적합 시에만 노출)
 # ==========================================
-st.markdown("### 💰 [부록] 총 배관 공사 예상 비용 추산기")
-st.caption("위에서 산출된 **'관경별 총 관길이(m)'**에 단가를 곱하여 개략적인 총 공사비를 계산합니다. 단가(원/m)는 현장 상황에 맞게 표에서 직접 수정해 보세요.")
+if total_actual_drop > STANDARD_PRESSURE and not result_df.empty:
+    st.markdown("---")
+    st.markdown("### 💰 [부록] 총 배관 공사 예상 비용 추산기")
+    st.caption("🚨 기존 배관의 압력손실이 기준치를 초과하여 **관경 확대 공사가 필요**합니다. 산출된 관경별 길이에 단가를 곱하여 총 공사비를 개략적으로 추산해 보세요.")
 
-if not result_df.empty:
     summary_df = result_df.groupby('선정관경')['관길이(m)'].sum().reset_index()
     cost_list = [{"선정관경": r['선정관경'], "총 관길이(m)": round(r['관길이(m)'], 2), "예상단가(원/m)": default_unit_costs.get(r['선정관경'], 100000)} for _, r in summary_df.iterrows()]
     cost_df = pd.DataFrame(cost_list)
@@ -317,5 +316,3 @@ if not result_df.empty:
         total_cost = (edited_cost['총 관길이(m)'] * edited_cost['예상단가(원/m)']).sum()
         st.markdown("<br>", unsafe_allow_html=True)
         st.metric("💡 총 배관 공사 예상 비용", f"{int(total_cost):,} 원")
-else:
-    st.info("데이터를 입력하시면 이곳에 공사비 추산기가 나타납니다.")
