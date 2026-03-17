@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import io  # 엑셀 파일 변환을 위한 라이브러리 추가
 
 st.set_page_config(page_title="공동주택 관경 적합성 검토기", layout="wide")
 st.title("🏢 공동주택 도시가스 관경 사전 검토기")
@@ -86,9 +87,6 @@ col3.info(f"💡 산출된 세대당 유량: **{household_flow:.4f} ㎥/hr**")
 
 st.markdown("---")
 
-# ==========================================
-# 도면 물량 직접 입력 (에디터) 
-# ==========================================
 st.markdown("### 2️⃣ 구간별 도면 물량 입력 (Data Entry)")
 st.caption("💡 글자 지우기(백스페이스)로 '구간' 칸을 비우면 해당 줄은 계산에서 완전히 제외됩니다.")
 
@@ -111,10 +109,8 @@ edited_df = st.data_editor(
     }
 )
 
-# 🚀 [유령 행(Ghost Row) 제거 완벽 필터링]
-# 사용자가 셀 내용을 지워버렸을 때, 값이 없거나 '0'으로 인식되는 쓰레기 데이터를 원천 차단
-edited_df['구간'] = edited_df['구간'].astype(str).str.strip() # 공백 제거
-edited_df = edited_df[~edited_df['구간'].isin(['', '0', 'nan', 'None'])] # 유효하지 않은 구간명 즉시 삭제
+edited_df['구간'] = edited_df['구간'].astype(str).str.strip() 
+edited_df = edited_df[~edited_df['구간'].isin(['', '0', 'nan', 'None'])] 
 edited_df = edited_df.fillna(0) 
 
 # 계산 로직
@@ -178,18 +174,39 @@ result_df = pd.DataFrame(result_data)
 
 st.markdown("---")
 
-# 최종 결과 표
-st.markdown("### 3️⃣ 최종 관경산출표")
+# 엑셀 다운로드를 위한 함수
+def convert_df_to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='관경산출결과')
+    return output.getvalue()
 
+col_title, col_download = st.columns([8, 2])
+with col_title:
+    st.markdown("### 3️⃣ 최종 관경산출표")
+with col_download:
+    if not result_df.empty:
+        excel_data = convert_df_to_excel(result_df)
+        st.download_button(
+            label="📥 엑셀파일 다운로드",
+            data=excel_data,
+            file_name="최종관경산출결과.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+# 포맷팅 적용 (천 단위 콤마 추가 등)
 st.dataframe(
     result_df,
     use_container_width=True,
     hide_index=True,
     column_config={
+        "세대수(세대)": st.column_config.NumberColumn("세대수(세대)", format="%,d"),
+        "유량(㎥/hr)": st.column_config.NumberColumn("유량(㎥/hr)", format="%,.2f"),
         "동시사용률": st.column_config.NumberColumn("동시사용률", format="%.2f"),
-        "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%.2f"),
-        "관상당합계": st.column_config.NumberColumn("관상당합계", format="%.2f"),
-        "관길이(m)": st.column_config.NumberColumn("관길이(m)\n(직관+관상당)", format="%.2f"),
+        "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%,.2f"),
+        "관상당합계": st.column_config.NumberColumn("관상당합계", format="%,.2f"),
+        "관길이(m)": st.column_config.NumberColumn("관길이(m)\n(직관+관상당)", format="%,.2f"),
         "실_압력손실(kPa)": st.column_config.NumberColumn("실_압력손실(kPa)\n(실제 지출)", format="%.4f"),
         "구간_허용압력(kPa)": st.column_config.NumberColumn("구간 허용압력(kPa)\n(쪼개진 예산)", format="%.4f"),
     }
@@ -205,16 +222,28 @@ with col3:
     if total_actual_drop == 0:
         st.info("데이터를 입력해 주세요.")
     elif total_actual_drop <= STANDARD_PRESSURE:
-        # 적합할 경우 - 녹색 배경에 큰 글씨 (HTML 주입)
+        # 적합할 경우 - 녹색 배경에 큰 글씨
         st.markdown("""
         <div style="background-color: #d4edda; padding: 20px; border-radius: 10px; text-align: center; border: 2px solid #c3e6cb;">
             <h2 style="color: #155724; margin: 0; font-size: 2.2rem;">✅ 적 합 (공사 불필요)</h2>
         </div>
         """, unsafe_allow_html=True)
     else:
-        # 부적합할 경우 - 빨간색 배경에 큰 글씨 (HTML 주입)
+        # 부적합할 경우 - 빨간색 배경에 큰 글씨
         st.markdown("""
         <div style="background-color: #f8d7da; padding: 20px; border-radius: 10px; text-align: center; border: 2px solid #f5c6cb;">
             <h2 style="color: #721c24; margin: 0; font-size: 2.2rem;">🚨 부 적 합 (관경 확대 요망)</h2>
         </div>
         """, unsafe_allow_html=True)
+        
+        # 부적합 시 가장 압력손실이 큰 원인 구간 찾아주기
+        if not result_df.empty:
+            worst_idx = result_df['실_압력손실(kPa)'].idxmax()
+            worst_section = result_df.loc[worst_idx, '구간']
+            worst_drop = result_df.loc[worst_idx, '실_압력손실(kPa)']
+            
+            st.markdown(f"""
+            <div style="margin-top: 15px; padding: 15px; background-color: #fff3cd; border-left: 5px solid #ffc107; color: #856404;">
+                <strong>⚠️ 진단 코멘트:</strong> <span style="font-size:1.1em;"><strong>[{worst_section}]</strong></span> 구간에서 압력손실(<strong>{worst_drop:.4f} kPa</strong>)이 가장 크게 발생하고 있습니다. 해당 구간의 관경 확대를 우선적으로 검토해 보세요!
+            </div>
+            """, unsafe_allow_html=True)
