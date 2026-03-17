@@ -6,17 +6,17 @@ st.title("🏢 공동주택 도시가스 관경 사전 검토기 (Auto-Calc)")
 
 STANDARD_CAL = 10145 
 
-# 관상당 환산길이 기준표 (단위: m)
+# 엑셀 [표(관상당)] 시트와 100% 동일하게 부속류 제원표 완벽 동기화 (오류 수정 완료)
 pipe_data = {
-    '400P': {'inner_d': 32.92, 'ball': 4.0, 'el90': 18.0, 'el45': 9.0, 'tee': 25.0, 'tee14': 12.0, 'red12': 9.0},
-    '355P': {'inner_d': 29.04, 'ball': 3.5, 'el90': 16.0, 'el45': 8.0, 'tee': 22.0, 'tee14': 10.0, 'red12': 8.0},
-    '280P': {'inner_d': 22.92, 'ball': 2.5, 'el90': 11.0, 'el45': 5.5, 'tee': 16.0, 'tee14': 7.0,  'red12': 5.0},
-    '225P': {'inner_d': 18.50, 'ball': 2.0, 'el90': 9.0,  'el45': 4.5, 'tee': 13.0, 'tee14': 6.0,  'red12': 4.0},
-    '160P': {'inner_d': 13.18, 'ball': 1.1, 'el90': 4.8,  'el45': 2.4, 'tee': 10.0, 'tee14': 4.3,  'red12': 1.8},
-    '90P':  {'inner_d': 7.36,  'ball': 0.5, 'el90': 2.4,  'el45': 1.2, 'tee': 4.0,  'tee14': 1.5,  'red12': 0.9},
-    '65S':  {'inner_d': 6.90,  'ball': 0.43,'el90': 2.0,  'el45': 1.0, 'tee': 3.2,  'tee14': 1.3,  'red12': 0.7},
-    '50S':  {'inner_d': 5.32,  'ball': 0.35,'el90': 1.7,  'el45': 0.85,'tee': 2.6,  'tee14': 1.0,  'red12': 0.6},
-    '40S':  {'inner_d': 4.21,  'ball': 0.30,'el90': 1.4,  'el45': 0.7, 'tee': 2.1,  'tee14': 0.7,  'red12': 0.45}
+    '400P': {'inner_d': 32.92, 'ball': 2.36, 'el90': 9.53, 'el45': 4.76, 'tee': 28.50, 'tee14': 9.53, 'red12': 4.05},
+    '355P': {'inner_d': 29.04, 'ball': 2.13, 'el90': 8.51, 'el45': 4.25, 'tee': 24.68, 'tee14': 7.66, 'red12': 3.49},
+    '280P': {'inner_d': 22.92, 'ball': 1.65, 'el90': 7.28, 'el45': 3.64, 'tee': 18.77, 'tee14': 6.53,  'red12': 2.63},
+    '225P': {'inner_d': 18.50, 'ball': 1.31, 'el90': 5.82,  'el45': 2.91, 'tee': 12.74, 'tee14': 5.34,  'red12': 2.18},
+    '160P': {'inner_d': 13.18, 'ball': 0.93, 'el90': 4.07,  'el45': 2.04, 'tee': 8.49, 'tee14': 3.65,  'red12': 1.53},
+    '90P':  {'inner_d': 7.36,  'ball': 0.49, 'el90': 2.24,  'el45': 1.12, 'tee': 3.79,  'tee14': 1.32,  'red12': 0.84},
+    '65S':  {'inner_d': 6.90,  'ball': 0.43, 'el90': 2.00,  'el45': 1.00, 'tee': 3.20,  'tee14': 1.30,  'red12': 0.70},
+    '50S':  {'inner_d': 5.32,  'ball': 0.35, 'el90': 1.70,  'el45': 0.85, 'tee': 2.60,  'tee14': 1.00,  'red12': 0.60},
+    '40S':  {'inner_d': 4.21,  'ball': 0.30, 'el90': 1.40,  'el45': 0.70, 'tee': 2.10,  'tee14': 0.70,  'red12': 0.45}
 }
 
 def get_sim_rate(n):
@@ -65,9 +65,9 @@ if uploaded_file:
         for col in ['세대수(세대)', '직관길이(m)']:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     except Exception:
-        df = pd.DataFrame([["A-B", 1740, "400P", 64.0, 1, 0, 0, 0, 0, 0]], columns=input_columns)
+        df = pd.DataFrame([["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0]], columns=input_columns)
 else:
-    df = pd.DataFrame([["A-B", 1740, "400P", 64.0, 1, 0, 0, 0, 0, 0]], columns=input_columns)
+    df = pd.DataFrame([["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0]], columns=input_columns)
 
 st.markdown("---")
 
@@ -87,9 +87,9 @@ st.markdown("---")
 # 3. 도면 물량 직접 입력 (에디터)
 # ==========================================
 st.markdown("### 2️⃣ 구간별 도면 물량 입력 (Data Entry)")
-st.caption("💡 '직관길이'와 '부속류 수량'을 입력 후 **Enter**를 누르시면, 하단 표에서 **관상당합계**와 **관길이(m)**가 즉시 자동 산출됩니다.")
+st.caption("💡 '직관길이'와 '부속류 수량'을 입력 후 **Enter**를 누르시면, 하단 표에서 **관상당합계**와 **관길이(m)**가 즉시 엑셀과 동일하게 자동 산출됩니다.")
 
-df = df.fillna(0) # 에디터 초기화 시 결측치 0으로 강제 변환
+df = df.fillna(0) 
 
 edited_df = st.data_editor(
     df,
@@ -102,16 +102,15 @@ edited_df = st.data_editor(
     }
 )
 
-edited_df = edited_df.fillna(0) # 에디터 수정 후 결측치 발생 시 0으로 변환 (에러 원천 차단)
+edited_df = edited_df.fillna(0) 
 
 # ==========================================
-# 4. 백엔드 계산 (관상당합계 & 관길이 산출)
+# 4. 백엔드 계산 (관상당합계 & 관길이 정확한 환산율 적용)
 # ==========================================
 for idx, row in edited_df.iterrows():
     pipe_type = str(row['선정관경']).strip()
     p_info = pipe_data.get(pipe_type, pipe_data['400P']) 
     
-    # 엑셀의 '관상당합계' 수식 구현
     eq_length = (float(row['볼밸브(개)']) * p_info['ball']) + \
                 (float(row['90도엘보(개)']) * p_info['el90']) + \
                 (float(row['45도엘보(개)']) * p_info['el45']) + \
@@ -124,7 +123,6 @@ for idx, row in edited_df.iterrows():
     edited_df.at[idx, '관상당합계'] = eq_length
     edited_df.at[idx, '관길이(m)'] = total_length
 
-# 허용압력손실 분배를 위한 전체 관길이 합산
 grand_total_length = edited_df['관길이(m)'].sum()
 
 result_data = []
@@ -142,10 +140,7 @@ for idx, row in edited_df.iterrows():
     
     관길이 = row['관길이(m)']
     
-    # 실 압력손실 (Pole 공식)
     p_drop = 0.01222 * (관길이 * (q_calc ** 2)) / (inner_d ** 5) if inner_d > 0 else 0
-    
-    # 허용압력손실 자동 분배
     allowable_drop = 0.3 * (관길이 / grand_total_length) if grand_total_length > 0 else 0
     
     total_actual_drop += p_drop
@@ -172,7 +167,7 @@ st.markdown("---")
 # 5. 최종 결과 표 (뷰어)
 # ==========================================
 st.markdown("### 3️⃣ 최종 관경산출표")
-st.caption("**직관길이 + 관상당합계 = 관길이(m)** 로직이 적용되어 엑셀과 동일한 명칭과 계산값으로 도출됩니다.")
+st.caption("✅ **수정 완료:** 이제 엑셀의 관상당환산표 기준값과 동일하게 환산길이가 곱해집니다. (예: 400P 90도 엘보 1개 = 9.53m)")
 
 st.dataframe(
     result_df,
