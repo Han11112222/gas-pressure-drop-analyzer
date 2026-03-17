@@ -37,7 +37,6 @@ def get_sim_rate(n):
     elif n <= 300: return 0.29
     else: return 0.28
 
-# 세션 상태 초기화 (표 리셋 기능용)
 if 'reset_data' not in st.session_state:
     st.session_state['reset_data'] = False
 
@@ -47,9 +46,8 @@ with st.sidebar:
 
 input_columns = ['구간', '세대수(세대)', '선정관경', '직관길이(m)', '볼밸브(개)', '90도엘보(개)', '45도엘보(개)', '동경티(개)', '1/4축소티(개)', '1/2레듀샤(개)']
 
-# 데이터 초기화(빈 표) 로직
 if st.session_state['reset_data']:
-    df = pd.DataFrame(columns=input_columns) # 아예 텅 빈 표 생성
+    df = pd.DataFrame(columns=input_columns) 
 else:
     if uploaded_file:
         try:
@@ -89,12 +87,10 @@ col3.info(f"💡 산출된 세대당 유량: **{household_flow:.4f} ㎥/hr**")
 st.markdown("---")
 
 # ==========================================
-# 도면 물량 직접 입력 (에디터) 및 삭제 안내
+# 도면 물량 직접 입력 (에디터) 
 # ==========================================
 st.markdown("### 2️⃣ 구간별 도면 물량 입력 (Data Entry)")
-
-# 삭제/초기화 안내 메시지 박스
-st.info("💡 **[입력 팁]** 행(줄)을 통째로 **삭제**하시려면 표의 **맨 왼쪽 회색 체크박스 칸**을 클릭한 후, 키보드의 **Delete 키**를 누르세요.")
+st.caption("💡 글자 지우기(백스페이스)로 '구간' 칸을 비우면 해당 줄은 계산에서 완전히 제외됩니다.")
 
 col_btn, _ = st.columns([1, 4])
 with col_btn:
@@ -108,21 +104,24 @@ edited_df = st.data_editor(
     df,
     num_rows="dynamic",
     use_container_width=True,
-    hide_index=False, # 삭제가 용이하도록 인덱스 표시 켜기
+    hide_index=False,
     column_config={
         "선정관경": st.column_config.SelectboxColumn("선정관경", options=list(pipe_data.keys())),
         "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%.2f"),
     }
 )
 
+# 🚀 [유령 행(Ghost Row) 제거 완벽 필터링]
+# 사용자가 셀 내용을 지워버렸을 때, 값이 없거나 '0'으로 인식되는 쓰레기 데이터를 원천 차단
+edited_df['구간'] = edited_df['구간'].astype(str).str.strip() # 공백 제거
+edited_df = edited_df[~edited_df['구간'].isin(['', '0', 'nan', 'None'])] # 유효하지 않은 구간명 즉시 삭제
 edited_df = edited_df.fillna(0) 
 
 # 계산 로직
 for idx, row in edited_df.iterrows():
-    # 표가 비워져서 데이터가 없거나 관경 선택이 안 된 경우 예외 처리
     pipe_type = str(row['선정관경']).strip()
     if pipe_type not in pipe_data:
-        pipe_type = '400P' # 미선택시 기본값으로 계산 에러 방지
+        pipe_type = '400P' 
         
     p_info = pipe_data.get(pipe_type)
     
@@ -171,8 +170,8 @@ for idx, row in edited_df.iterrows():
         "관상당합계": round(row['관상당합계'], 2),
         "관길이(m)": round(관길이, 2),
         "유량(㎥/hr)": round(q_calc, 2),
-        "실_압력손실": round(p_drop, 4),
-        "구간_허용압력": round(allowable_drop, 4)
+        "실_압력손실(kPa)": round(p_drop, 4),
+        "구간_허용압력(kPa)": round(allowable_drop, 4)
     })
 
 result_df = pd.DataFrame(result_data)
@@ -191,21 +190,31 @@ st.dataframe(
         "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%.2f"),
         "관상당합계": st.column_config.NumberColumn("관상당합계", format="%.2f"),
         "관길이(m)": st.column_config.NumberColumn("관길이(m)\n(직관+관상당)", format="%.2f"),
-        "실_압력손실": st.column_config.NumberColumn("실_압력손실(kPa)\n(실제 지출)", format="%.4f"),
-        "구간_허용압력": st.column_config.NumberColumn("구간 허용압력(kPa)\n(쪼개진 예산)", format="%.4f"),
+        "실_압력손실(kPa)": st.column_config.NumberColumn("실_압력손실(kPa)\n(실제 지출)", format="%.4f"),
+        "구간_허용압력(kPa)": st.column_config.NumberColumn("구간 허용압력(kPa)\n(쪼개진 예산)", format="%.4f"),
     }
 )
 
 st.markdown("#### 🎯 최종 판정 결과")
 col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
-    st.metric(label="전체 허용압력 기준 (고정)", value=f"{STANDARD_PRESSURE:.4f} kPa")
+    st.metric(label="실압력 손실 (kPa)", value=f"{total_actual_drop:.4f}")
 with col2:
-    st.metric(label="총 실 압력손실 (계산합계)", value=f"{total_actual_drop:.4f} kPa")
+    st.metric(label="허용압력 손실 (kPa)", value=f"{STANDARD_PRESSURE:.4f}")
 with col3:
     if total_actual_drop == 0:
         st.info("데이터를 입력해 주세요.")
     elif total_actual_drop <= STANDARD_PRESSURE:
-        st.success(f"✅ **[공사 불필요] 적합 판정** (총 압력손실이 기준치 {STANDARD_PRESSURE}kPa 이내입니다.)")
+        # 적합할 경우 - 녹색 배경에 큰 글씨 (HTML 주입)
+        st.markdown("""
+        <div style="background-color: #d4edda; padding: 20px; border-radius: 10px; text-align: center; border: 2px solid #c3e6cb;">
+            <h2 style="color: #155724; margin: 0; font-size: 2.2rem;">✅ 적 합 (공사 불필요)</h2>
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        st.error(f"🚨 **[공사 필요] 부적합 (관경 확대 요망)** (총 압력손실이 기준치 {STANDARD_PRESSURE}kPa를 초과했습니다.)")
+        # 부적합할 경우 - 빨간색 배경에 큰 글씨 (HTML 주입)
+        st.markdown("""
+        <div style="background-color: #f8d7da; padding: 20px; border-radius: 10px; text-align: center; border: 2px solid #f5c6cb;">
+            <h2 style="color: #721c24; margin: 0; font-size: 2.2rem;">🚨 부 적 합 (관경 확대 요망)</h2>
+        </div>
+        """, unsafe_allow_html=True)
