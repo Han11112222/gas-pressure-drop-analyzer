@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="공동주택 관경 적합성 자동 검토기", layout="wide")
-st.title("🏢 공동주택 도시가스 관경 사전 검토기 (Auto-Calc)")
+st.set_page_config(page_title="공동주택 관경 적합성 검토기", layout="wide")
+st.title("🏢 공동주택 도시가스 관경 사전 검토기")
 
 STANDARD_CAL = 10145 
-STANDARD_PRESSURE = 0.3000 # 가스안전공사 법적 총 허용압력손실 기준 (kPa)
+STANDARD_PRESSURE = 0.3000 
 
-# 관상당 환산길이 기준표 (단위: m)
 pipe_data = {
     '400P': {'inner_d': 32.92, 'ball': 2.36, 'el90': 9.53, 'el45': 4.76, 'tee': 28.50, 'tee14': 9.53, 'red12': 4.05},
     '355P': {'inner_d': 29.04, 'ball': 2.13, 'el90': 8.51, 'el45': 4.25, 'tee': 24.68, 'tee14': 7.66, 'red12': 3.49},
@@ -38,49 +37,48 @@ def get_sim_rate(n):
     elif n <= 300: return 0.29
     else: return 0.28
 
-# ==========================================
-# 1. 파일 업로드 로직
-# ==========================================
+# 세션 상태 초기화 (표 리셋 기능용)
+if 'reset_data' not in st.session_state:
+    st.session_state['reset_data'] = False
+
 with st.sidebar:
     st.header("⚙️ 엑셀 데이터 불러오기")
     uploaded_file = st.file_uploader("관경산출식 엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
 
 input_columns = ['구간', '세대수(세대)', '선정관경', '직관길이(m)', '볼밸브(개)', '90도엘보(개)', '45도엘보(개)', '동경티(개)', '1/4축소티(개)', '1/2레듀샤(개)']
 
-if uploaded_file:
-    try:
-        xls = pd.ExcelFile(uploaded_file)
-        sheet_names = [s for s in xls.sheet_names if '관경산출식' in s]
-        selected_sheet = st.sidebar.selectbox("불러올 시트 선택", sheet_names if sheet_names else xls.sheet_names)
-        df_excel = pd.read_excel(uploaded_file, sheet_name=selected_sheet, skiprows=7)
-
-        df = df_excel.iloc[:, [1, 9, 16, 11]].copy()
-        df.columns = ['구간', '세대수(세대)', '선정관경', '직관길이(m)']
-        df = df.dropna(subset=['구간'])
-        df = df[~df['구간'].astype(str).str.contains('계|합')]
-        
-        for fitting in ['볼밸브(개)', '90도엘보(개)', '45도엘보(개)', '동경티(개)', '1/4축소티(개)', '1/2레듀샤(개)']:
-            df[fitting] = 0
-            
-        df = df[input_columns]
-        for col in ['세대수(세대)', '직관길이(m)']:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    except Exception:
-        # 파일 에러시 기본 1줄 제공
-        df = pd.DataFrame([["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0]], columns=input_columns)
+# 데이터 초기화(빈 표) 로직
+if st.session_state['reset_data']:
+    df = pd.DataFrame(columns=input_columns) # 아예 텅 빈 표 생성
 else:
-    # 엑셀을 올리지 않았을 때 예산이 분배되는 것을 확인하기 위한 3줄 기본 제공
-    df = pd.DataFrame([
-        ["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0],
-        ["B-C", 1740, "400P", 94.0, 0, 2, 0, 0, 0, 0],
-        ["C-D", 1740, "400P", 61.0, 0, 1, 0, 0, 0, 0]
-    ], columns=input_columns)
+    if uploaded_file:
+        try:
+            xls = pd.ExcelFile(uploaded_file)
+            sheet_names = [s for s in xls.sheet_names if '관경산출식' in s]
+            selected_sheet = st.sidebar.selectbox("불러올 시트 선택", sheet_names if sheet_names else xls.sheet_names)
+            df_excel = pd.read_excel(uploaded_file, sheet_name=selected_sheet, skiprows=7)
+
+            df = df_excel.iloc[:, [1, 9, 16, 11]].copy()
+            df.columns = ['구간', '세대수(세대)', '선정관경', '직관길이(m)']
+            df = df.dropna(subset=['구간'])
+            df = df[~df['구간'].astype(str).str.contains('계|합')]
+            
+            for fitting in ['볼밸브(개)', '90도엘보(개)', '45도엘보(개)', '동경티(개)', '1/4축소티(개)', '1/2레듀샤(개)']:
+                df[fitting] = 0
+                
+            df = df[input_columns]
+            for col in ['세대수(세대)', '직관길이(m)']:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        except Exception:
+            df = pd.DataFrame([["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0]], columns=input_columns)
+    else:
+        df = pd.DataFrame([
+            ["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0],
+            ["B-C", 1740, "400P", 94.0, 0, 2, 0, 0, 0, 0]
+        ], columns=input_columns)
 
 st.markdown("---")
 
-# ==========================================
-# 2. 열량 변환
-# ==========================================
 st.markdown("### 1️⃣ 세대당 가스소비량 설정")
 col1, col2, col3 = st.columns(3)
 boiler_kcal = col1.number_input("보일러 발열량 (kcal/hr)", value=22100, step=100)
@@ -91,10 +89,18 @@ col3.info(f"💡 산출된 세대당 유량: **{household_flow:.4f} ㎥/hr**")
 st.markdown("---")
 
 # ==========================================
-# 3. 도면 물량 직접 입력 (에디터)
+# 도면 물량 직접 입력 (에디터) 및 삭제 안내
 # ==========================================
 st.markdown("### 2️⃣ 구간별 도면 물량 입력 (Data Entry)")
-st.caption("💡 '직관길이'와 '부속류 수량'을 자유롭게 추가/수정해 보세요. 하단 표에 즉시 연동됩니다.")
+
+# 삭제/초기화 안내 메시지 박스
+st.info("💡 **[입력 팁]** 행(줄)을 통째로 **삭제**하시려면 표의 **맨 왼쪽 회색 체크박스 칸**을 클릭한 후, 키보드의 **Delete 키**를 누르세요.")
+
+col_btn, _ = st.columns([1, 4])
+with col_btn:
+    if st.button("🗑️ 표 전체 지우기 (새로 작성)"):
+        st.session_state['reset_data'] = True
+        st.rerun()
 
 df = df.fillna(0) 
 
@@ -102,21 +108,23 @@ edited_df = st.data_editor(
     df,
     num_rows="dynamic",
     use_container_width=True,
-    hide_index=True,
+    hide_index=False, # 삭제가 용이하도록 인덱스 표시 켜기
     column_config={
-        "선정관경": st.column_config.SelectboxColumn("선정관경", options=list(pipe_data.keys()), required=True),
+        "선정관경": st.column_config.SelectboxColumn("선정관경", options=list(pipe_data.keys())),
         "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%.2f"),
     }
 )
 
 edited_df = edited_df.fillna(0) 
 
-# ==========================================
-# 4. 백엔드 계산 (허용압력손실 0.3 자동 분배)
-# ==========================================
+# 계산 로직
 for idx, row in edited_df.iterrows():
+    # 표가 비워져서 데이터가 없거나 관경 선택이 안 된 경우 예외 처리
     pipe_type = str(row['선정관경']).strip()
-    p_info = pipe_data.get(pipe_type, pipe_data['400P']) 
+    if pipe_type not in pipe_data:
+        pipe_type = '400P' # 미선택시 기본값으로 계산 에러 방지
+        
+    p_info = pipe_data.get(pipe_type)
     
     eq_length = (float(row['볼밸브(개)']) * p_info['ball']) + \
                 (float(row['90도엘보(개)']) * p_info['el90']) + \
@@ -137,7 +145,10 @@ total_actual_drop = 0
 
 for idx, row in edited_df.iterrows():
     pipe_type = str(row['선정관경']).strip()
-    p_info = pipe_data.get(pipe_type, pipe_data['400P']) 
+    if pipe_type not in pipe_data:
+        pipe_type = '400P'
+        
+    p_info = pipe_data.get(pipe_type)
     inner_d = p_info['inner_d']
     
     세대수 = int(row['세대수(세대)'])
@@ -146,11 +157,9 @@ for idx, row in edited_df.iterrows():
     
     관길이 = row['관길이(m)']
     
-    # 실 압력손실 계산
     p_drop = 0.01222 * (관길이 * (q_calc ** 2)) / (inner_d ** 5) if inner_d > 0 else 0
     total_actual_drop += p_drop
     
-    # [핵심] 0.3kPa 전체 기준을 관길이 비율로 각 구간에 배분
     allowable_drop = STANDARD_PRESSURE * (관길이 / grand_total_length) if grand_total_length > 0 else 0
     
     result_data.append({
@@ -170,11 +179,8 @@ result_df = pd.DataFrame(result_data)
 
 st.markdown("---")
 
-# ==========================================
-# 5. 최종 결과 표 (뷰어)
-# ==========================================
+# 최종 결과 표
 st.markdown("### 3️⃣ 최종 관경산출표")
-st.caption(f"✅ **전체 허용기준({STANDARD_PRESSURE} kPa)**을 배관 길이에 비례하여 각 구간별 **'구간 허용압력'**으로 자동 쪼개서 배분합니다.")
 
 st.dataframe(
     result_df,
@@ -197,7 +203,9 @@ with col1:
 with col2:
     st.metric(label="총 실 압력손실 (계산합계)", value=f"{total_actual_drop:.4f} kPa")
 with col3:
-    if total_actual_drop <= STANDARD_PRESSURE and total_actual_drop > 0:
+    if total_actual_drop == 0:
+        st.info("데이터를 입력해 주세요.")
+    elif total_actual_drop <= STANDARD_PRESSURE:
         st.success(f"✅ **[공사 불필요] 적합 판정** (총 압력손실이 기준치 {STANDARD_PRESSURE}kPa 이내입니다.)")
-    elif total_actual_drop > STANDARD_PRESSURE:
+    else:
         st.error(f"🚨 **[공사 필요] 부적합 (관경 확대 요망)** (총 압력손실이 기준치 {STANDARD_PRESSURE}kPa를 초과했습니다.)")
