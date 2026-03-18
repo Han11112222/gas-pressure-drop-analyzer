@@ -1,12 +1,15 @@
 import streamlit as st
 import pandas as pd
 import io
+import os
+import tempfile
+import json
 import time
 
 st.set_page_config(page_title="공동주택 관경 적합성 검토기", layout="wide")
 
 STANDARD_CAL = 10145 
-STANDARD_PRESSURE = 0.3000 
+# STANDARD_PRESSURE는 이제 UI 선택에 따라 동적으로 변합니다.
 
 pipe_data = {
     '400P': {'inner_d': 32.92, 'ball': 2.36, 'el90': 9.53, 'el45': 4.76, 'tee': 28.50, 'tee14': 9.53, 'red12': 4.05},
@@ -20,7 +23,6 @@ pipe_data = {
     '40S':  {'inner_d': 4.21,  'ball': 0.30, 'el90': 1.40,  'el45': 0.70, 'tee': 2.10,  'tee14': 0.70,  'red12': 0.45}
 }
 
-# 기본 배관 공사 단가 (미니 계산기 초기값용, 원/m)
 default_unit_costs = {
     '400P': 350000, '355P': 280000, '280P': 200000, '225P': 150000,
     '160P': 100000, '90P': 60000, '65S': 50000, '50S': 40000, '40S': 35000
@@ -44,9 +46,10 @@ def get_sim_rate(n):
     elif n <= 300: return 0.29
     else: return 0.28
 
-# 상태 초기화
 if 'reset_data' not in st.session_state:
     st.session_state['reset_data'] = False
+if 'ai_df' not in st.session_state:
+    st.session_state['ai_df'] = pd.DataFrame()
 if 'ai_extracted' not in st.session_state:
     st.session_state['ai_extracted'] = False
 
@@ -55,7 +58,7 @@ empty_df = pd.DataFrame(columns=input_columns)
 df = empty_df.copy()
 
 # ==========================================
-# 좌측 사이드바: 탭 구성 및 데이터 로드
+# 좌측 사이드바
 # ==========================================
 with st.sidebar:
     st.title("메뉴 이동")
@@ -88,10 +91,7 @@ with st.sidebar:
                 except Exception:
                     df = pd.DataFrame([["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0]], columns=input_columns)
             else:
-                df = pd.DataFrame([
-                    ["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0],
-                    ["B-C", 1740, "400P", 94.0, 0, 2, 0, 0, 0, 0]
-                ], columns=input_columns)
+                df = pd.DataFrame([["A-B", 1740, "400P", 64.0, 0, 1, 0, 0, 0, 0]], columns=input_columns)
 
     elif menu == "🤖 2. 관경 산출 고도화 (도면 AI)":
         st.header("⚙️ AI 도면 분석기 (시연용)")
@@ -102,23 +102,27 @@ with st.sidebar:
             if st.button("🤖 AI 도면 분석 시작 (추출 시뮬레이션)"):
                 st.session_state['ai_extracted'] = True
                 st.session_state['reset_data'] = False
+                
                 with st.spinner("AI가 도면의 배관 경로, 관경 텍스트, 엘보/티 개수를 분석 중입니다..."):
                     time.sleep(2.5) # AI가 분석하는 척 대기
-                    st.toast("✅ 도면 분석 완료! 아래 에디터에 물량이 자동 입력되었습니다.")
                     
-        # 가상 데이터(Mock) 주입
-        if st.session_state['ai_extracted'] and uploaded_pdf and not st.session_state['reset_data']:
-            df = pd.DataFrame([
-                ["A-B", 1740, "400P", 64.0, 1, 1, 0, 0, 0, 0],
-                ["B-C", 1740, "280P", 17.0, 0, 2, 0, 1, 0, 0],
-                ["C-D", 1740, "225P", 132.0, 0, 3, 0, 0, 0, 1]
-            ], columns=input_columns)
+                    # 시뮬레이션용 가짜 데이터 주입
+                    mock_data = pd.DataFrame([
+                        ["A-B", 1740, "400P", 64.0, 1, 1, 0, 0, 0, 0],
+                        ["B-C", 1740, "280P", 17.0, 0, 2, 0, 1, 0, 0],
+                        ["C-D", 1740, "225P", 132.0, 0, 3, 0, 0, 0, 1]
+                    ], columns=input_columns)
+                    
+                    st.session_state['ai_df'] = mock_data
+                    st.toast("✅ 도면 분석 완료! 아래 에디터에 물량이 자동 입력되었습니다.")
         else:
-            if not uploaded_pdf:
-                st.warning("도면 파일을 업로드해 주세요.")
+            st.warning("도면 파일을 업로드해 주세요.")
+                        
+        if not st.session_state['ai_df'].empty and not st.session_state['reset_data']:
+            df = st.session_state['ai_df'][input_columns]
 
 # ==========================================
-# 공통 UI: 메인 화면 (탭 1, 2 공통)
+# 공통 UI: 메인 화면
 # ==========================================
 if menu == "📊 1. 관경 산출 (엑셀/수기)":
     st.title("🏢 공동주택 도시가스 관경 사전 검토기")
@@ -127,7 +131,38 @@ else:
 
 st.markdown("---")
 
-# 1. 세대당 가스소비량 설정
+# 🚀 [신규 추가] 0. 기본 검토 조건 설정 (정압기 위치 및 배관 재질)
+st.markdown("### 0️⃣ 기본 검토 조건 설정")
+col_gov, col_pipe = st.columns(2)
+
+gov_loc = col_gov.radio(
+    "📍 지역정압기 위치 (허용압력 기준 결정)", 
+    ["단지 외부 (0.3 kPa 이내)", "단지 내 (0.5 kPa 이내)"],
+    horizontal=True
+)
+
+pipe_mat = col_pipe.radio(
+    "🔤 주 배관 재질 선택", 
+    ["PE (폴리에틸렌관)", "SPPG (가스용 강관)", "PE + SPPG 혼합"],
+    horizontal=True
+)
+
+# 정압기 위치에 따른 허용압력 동적 세팅
+if "단지 내" in gov_loc:
+    STANDARD_PRESSURE = 0.5000
+else:
+    STANDARD_PRESSURE = 0.3000
+
+# 배관 재질에 따른 에디터 드롭다운 옵션 필터링
+if "PE" in pipe_mat and "SPPG" not in pipe_mat:
+    available_pipes = [k for k in pipe_data.keys() if 'P' in k]
+elif "SPPG" in pipe_mat and "PE" not in pipe_mat:
+    available_pipes = [k for k in pipe_data.keys() if 'S' in k]
+else:
+    available_pipes = list(pipe_data.keys())
+
+st.markdown("---")
+
 st.markdown("### 1️⃣ 세대당 가스소비량 설정")
 col1, col2, col3 = st.columns(3)
 boiler_kcal = col1.number_input("보일러 발열량 (kcal/hr)", value=22100, step=100)
@@ -137,13 +172,12 @@ col3.info(f"💡 산출된 세대당 유량: **{household_flow:.4f} ㎥/hr**")
 
 st.markdown("---")
 
-# 2. 도면 물량 직접 입력 (에디터)
 st.markdown("### 2️⃣ 구간별 도면 물량 데이터 에디터")
 col_btn, _ = st.columns([1, 4])
 with col_btn:
     if st.button("🗑️ 표 전체 지우기 (초기화)"):
         st.session_state['reset_data'] = True
-        st.session_state['ai_extracted'] = False
+        st.session_state['ai_df'] = pd.DataFrame()
         st.rerun()
 
 df = df.fillna(0) 
@@ -154,27 +188,25 @@ edited_df = st.data_editor(
     use_container_width=True,
     hide_index=False,
     column_config={
-        "선정관경": st.column_config.SelectboxColumn("선정관경", options=list(pipe_data.keys())),
+        # 🚀 선택한 주 배관 재질에 따라 드롭다운 옵션이 달라집니다.
+        "선정관경": st.column_config.SelectboxColumn("선정관경", options=available_pipes),
         "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%.2f"),
         "세대수(세대)": st.column_config.NumberColumn("세대수(세대)", format="%d"),
     }
 )
 
-# 유령 행 제거 완벽 필터링
 edited_df['구간'] = edited_df['구간'].astype(str).str.strip() 
 edited_df = edited_df[~edited_df['구간'].isin(['', '0', 'nan', 'None'])] 
 edited_df = edited_df.fillna(0) 
 
-# 변수 초기화
 total_actual_drop = 0
 result_data = []
 
-# 백엔드 계산 로직
 if not edited_df.empty:
-    # 1단계: 관상당합계 및 관길이 
     for idx, row in edited_df.iterrows():
         pipe_type = str(row['선정관경']).strip()
-        if pipe_type not in pipe_data: pipe_type = '400P' 
+        if pipe_type not in pipe_data: 
+            pipe_type = available_pipes[0] if available_pipes else '400P' # 예외 처리 안전장치
             
         p_info = pipe_data.get(pipe_type)
         eq_length = (float(row['볼밸브(개)']) * p_info['ball']) + \
@@ -189,10 +221,10 @@ if not edited_df.empty:
 
     grand_total_length = edited_df['관길이(m)'].sum()
 
-    # 2단계: 유량, 압력손실 계산
     for idx, row in edited_df.iterrows():
         pipe_type = str(row['선정관경']).strip()
-        if pipe_type not in pipe_data: pipe_type = '400P'
+        if pipe_type not in pipe_data: 
+            pipe_type = available_pipes[0] if available_pipes else '400P'
             
         p_info = pipe_data.get(pipe_type)
         inner_d = p_info['inner_d']
@@ -224,7 +256,7 @@ result_df = pd.DataFrame(result_data)
 st.markdown("---")
 
 # ==========================================
-# 3. 최종 결과 표 & 진단 메시지 & 엑셀 다운로드
+# 3. 최종 결과 표
 # ==========================================
 status_msg = ""
 diagnosis_msg = ""
@@ -255,17 +287,10 @@ def convert_df_to_excel(df, status, diagnosis):
     return output.getvalue()
 
 col_title, col_download = st.columns([8, 2])
-with col_title:
-    st.markdown("### 3️⃣ 최종 관경산출표")
+with col_title: st.markdown("### 3️⃣ 최종 관경산출표")
 with col_download:
     if not result_df.empty:
-        st.download_button(
-            label="📥 엑셀파일 다운로드 (판정포함)",
-            data=convert_df_to_excel(result_df, status_msg, diagnosis_msg),
-            file_name="최종관경산출결과.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
+        st.download_button("📥 엑셀 다운로드", data=convert_df_to_excel(result_df, status_msg, diagnosis_msg), file_name="최종관경산출.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 st.dataframe(
     result_df,
@@ -277,9 +302,9 @@ st.dataframe(
         "동시사용률": st.column_config.NumberColumn("동시사용률", format="%.2f"),
         "직관길이(m)": st.column_config.NumberColumn("직관길이(m)", format="%,.2f"),
         "관상당합계": st.column_config.NumberColumn("관상당합계", format="%,.2f"),
-        "관길이(m)": st.column_config.NumberColumn("관길이(m)\n(직관+관상당)", format="%,.2f"),
-        "실_압력손실(kPa)": st.column_config.NumberColumn("실_압력손실(kPa)\n(실제 지출)", format="%.4f"),
-        "구간_허용압력(kPa)": st.column_config.NumberColumn("구간 허용압력(kPa)\n(쪼개진 예산)", format="%.4f"),
+        "관길이(m)": st.column_config.NumberColumn("관길이(m)", format="%,.2f"),
+        "실_압력손실(kPa)": st.column_config.NumberColumn("실_압력손실(kPa)", format="%.4f"),
+        "구간_허용압력(kPa)": st.column_config.NumberColumn("구간 허용압력(kPa)", format="%.4f"),
     }
 )
 
@@ -288,31 +313,21 @@ col1, col2, col3 = st.columns([1, 1, 2])
 with col1: st.metric("실압력 손실 (kPa)", f"{total_actual_drop:.4f}")
 with col2: st.metric("허용압력 손실 (kPa)", f"{STANDARD_PRESSURE:.4f}")
 with col3:
-    if total_actual_drop == 0:
-        st.info("데이터를 입력해 주세요.")
+    if total_actual_drop == 0: st.info("데이터를 입력해 주세요.")
     elif total_actual_drop <= STANDARD_PRESSURE:
         st.markdown("""<div style="background-color:#d4edda; padding:20px; border-radius:10px; text-align:center;"><h2 style="color:#155724; margin:0;">✅ 적 합 (공사 불필요)</h2></div>""", unsafe_allow_html=True)
     else:
         st.markdown("""<div style="background-color:#f8d7da; padding:20px; border-radius:10px; text-align:center;"><h2 style="color:#721c24; margin:0;">🚨 부 적 합 (관경 확대 요망)</h2></div>""", unsafe_allow_html=True)
-        if diagnosis_msg:
-            st.markdown(f"""<div style="margin-top:15px; padding:15px; background-color:#fff3cd; border-left:5px solid #ffc107; color:#856404;"><strong>{diagnosis_msg}</strong></div>""", unsafe_allow_html=True)
+        if diagnosis_msg: st.markdown(f"""<div style="margin-top:15px; padding:15px; background-color:#fff3cd; border-left:5px solid #ffc107; color:#856404;"><strong>{diagnosis_msg}</strong></div>""", unsafe_allow_html=True)
 
-# ==========================================
-# 부록: 공사 예상 비용 추산기 (부적합 시에만 노출)
-# ==========================================
+# 공사 예상 비용 추산기 (부적합 시 노출)
 if total_actual_drop > STANDARD_PRESSURE and not result_df.empty:
     st.markdown("---")
     st.markdown("### 💰 [부록] 총 배관 공사 예상 비용 추산기")
-    st.caption("🚨 기존 배관의 압력손실이 기준치를 초과하여 **관경 확대 공사가 필요**합니다. 산출된 관경별 길이에 단가를 곱하여 총 공사비를 개략적으로 추산해 보세요.")
-
     summary_df = result_df.groupby('선정관경')['관길이(m)'].sum().reset_index()
-    cost_list = [{"선정관경": r['선정관경'], "총 관길이(m)": round(r['관길이(m)'], 2), "예상단가(원/m)": default_unit_costs.get(r['선정관경'], 100000)} for _, r in summary_df.iterrows()]
-    cost_df = pd.DataFrame(cost_list)
-    
+    cost_df = pd.DataFrame([{"선정관경": r['선정관경'], "총 관길이(m)": round(r['관길이(m)'], 2), "예상단가(원/m)": default_unit_costs.get(r['선정관경'], 100000)} for _, r in summary_df.iterrows()])
     c1, c2 = st.columns([2, 1])
-    with c1:
-        edited_cost = st.data_editor(cost_df, hide_index=True, use_container_width=True)
+    with c1: edited_cost = st.data_editor(cost_df, hide_index=True, use_container_width=True)
     with c2:
         total_cost = (edited_cost['총 관길이(m)'] * edited_cost['예상단가(원/m)']).sum()
-        st.markdown("<br>", unsafe_allow_html=True)
         st.metric("💡 총 배관 공사 예상 비용", f"{int(total_cost):,} 원")
